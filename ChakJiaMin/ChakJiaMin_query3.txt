@@ -1,0 +1,54 @@
+--Author: CHAK JIA MIN
+-- Report 3: Top 10 Facility Revenue Performance per Year
+SET LINESIZE 130;
+SET PAGESIZE 40;
+TTITLE CENTER 'Report 3: Top 10 Facility Revenue Performance per Year' SKIP 2
+
+COLUMN FACILITY_NAME FORMAT A15 HEADING 'Name'
+COLUMN FACILITY_TYPE FORMAT A20 HEADING 'Facility Type'
+COLUMN TOTAL_REVENUE FORMAT 999,999,999 HEADING 'Total Revenue'
+COLUMN BOOKING_COUNT FORMAT 999,999 HEADING 'Booking Count'
+COLUMN AVG_BOOKING_VALUE FORMAT 999,999.99 HEADING 'Avg Booking'
+COLUMN CAL_YEAR FORMAT 9999 HEADING 'Year'
+COLUMN CAL_MONTH_NAME FORMAT A10 HEADING 'Month'
+COLUMN DAY_TYPE FORMAT A10 HEADING 'DayType'
+
+WITH FacilityRevenue AS (
+    SELECT 
+        FD.FACILITY_NAME,
+        FD.FACILITY_TYPE,
+        SUM(F.BOOKING_FEE_AMT) AS total_revenue,
+        COUNT(F.BOOKING_DATE) AS booking_count,
+        ROUND(SUM(F.BOOKING_FEE_AMT) / COUNT(F.BOOKING_DATE), 2) AS avg_booking_value,
+        D.CAL_YEAR,
+        D.CAL_MONTH_NAME,
+        CASE WHEN D.WEEKDAY_IND = 'Y' THEN 'Weekday' ELSE 'Weekend' END AS day_type,
+        RANK() OVER (
+            PARTITION BY D.CAL_YEAR
+            ORDER BY SUM(F.BOOKING_FEE_AMT) DESC
+        ) AS revenue_rank
+    FROM FACILITY_BOOKING_FACT F
+    JOIN FACILITY_DIM FD ON F.FACILITY_KEY = FD.FACILITY_KEY
+    JOIN DATE_DIM D ON F.DATE_KEY = D.DATE_KEY
+    GROUP BY 
+        FD.FACILITY_NAME, FD.FACILITY_TYPE, FD.CAPACITY, 
+        D.CAL_YEAR, D.CAL_MONTH_NAME, D.WEEKDAY_IND
+)
+SELECT 
+    FACILITY_NAME,
+    FACILITY_TYPE,
+    total_revenue,
+    booking_count,
+    avg_booking_value,
+    CAL_YEAR,
+    CAL_MONTH_NAME,
+    day_type
+FROM FacilityRevenue
+WHERE revenue_rank <= 10
+ORDER BY CAL_YEAR DESC, total_revenue DESC;
+
+
+--WHO: Facility Name, Facility Type
+--WHAT: Financial metrics (total_revenue, booking_count, avg_booking_value)
+--WHEN: CAL_YEAR, CAL_MONTH_NAME, WEEKDAY_IND
+--WHY: in report

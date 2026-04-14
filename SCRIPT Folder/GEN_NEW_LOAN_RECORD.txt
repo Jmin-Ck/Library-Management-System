@@ -1,0 +1,198 @@
+-- Author: CHAK JIA MIN
+-- CHECK ALL YOUR TABLES
+
+SELECT TABLE_NAME FROM TABS;
+
+-- ENSURE WE HAVE 8 ROWS OF TABLES
+
+SELECT COUNT(*) FROM NEW_MBR;
+--7680 records
+
+-- ENSURE NOT LESS THAN 5824 OF CUSTOMERS
+
+======================================
+-- GENERATE LOAN RECORD
+-- 10 YEARS (30/06/2016 - 01/07/2025)
+-- EACH DAY 10 - 50 TRANSACTIONS
+-- RANDOMLY ASSIGN TO CUSTOMERS
+======================================
+-- Check the minimum and maximum customerID in new_cust (used to define the range of valid customer IDs)
+
+SELECT MIN(MEMBER_ID), MAX(MEMBER_ID)
+FROM NEW_MBR;
+
+MIN(MEMBER_ID)  MAX(MEMBER_ID)
+--------------- ---------------
+         100002          107681
+
+-- Check the minimum and maximum BOOK_ID in BOOK
+SELECT MIN(BOOK_ID), MAX(BOOK_ID)
+FROM BOOK;
+
+MIN(BOOK_ID)    MAX(BOOK_ID)
+--------------- ---------------
+          B0001           B0100  
+
+-- Check the minimum and maximum FINE_ID in FINE_INVOICES
+SELECT MIN(FINE_ID), MAX(FINE_ID)
+FROM FINE_INVOICES;
+
+MIN(FINE_ID)   MAX(FINE_ID)
+-------------- --------------
+        FI0001         FI0200
+
+
+=========================================================
+-- Drop the existing new_loans table if it exists
+
+
+-- Create the new_loans table to store synthetic order data
+CREATE TABLE NEW_LOANS (
+    LOAN_ID          NUMBER  NOT NULL,
+    BOOK_ID          VARCHAR2(5)  NOT NULL,
+    MEMBER_ID        NUMBER  NOT NULL,
+    LOAN_DATE        DATE NOT NULL,
+    DUE_DATE         DATE NOT NULL,
+    RETURN_DATE      DATE NOT NULL,
+    IS_EXTENDED      VARCHAR2(1)  DEFAULT 'N' CHECK(IS_EXTENDED IN('Y','N')),
+    EXTENSION_COUNT  NUMBER,
+    -- Primary key constraint
+    CONSTRAINT NEW_LOANS_LOANID_PK PRIMARY KEY (LOAN_ID,LOAN_DATE,DUE_DATE,RETURN_DATE),
+    CONSTRAINT NEW_LOANS_BOOKID_FK FOREIGN KEY (BOOK_ID) REFERENCES BOOK(BOOK_ID),
+    CONSTRAINT NEW_LOANS_MEMBERID_FK FOREIGN KEY (MEMBER_ID) REFERENCES NEW_MBR(MEMBER_ID)  
+);
+
+-- Create a sequence to generate LOANID values starting from 100001
+CREATE SEQUENCE LOAN_SEQ
+   START WITH 100001
+   INCREMENT BY 1;
+
+-- Drop the existing order sequence if it exists
+DROP SEQUENCE LOAN_SEQ
+
+-- Display current time to track script start
+SELECT TO_CHAR(SYSDATE,'HH:MI:SS')
+FROM DUAL;
+
+-- Enable DBMS output for debugging
+SET SERVEROUTPUT ON
+
+-- Declare a PL/SQL block to generate Loan Record for 10 years (from 01/01/2016 to 31/08/2025)
+DECLARE
+  STARTDATE      DATE := TO_DATE('30/06/2016','DD/MM/YYYY');  -- Starting date of loan generation
+  ENDDATE        DATE := TO_DATE('01/07/2025','DD/MM/YYYY');  -- Ending date
+
+  V_MAX_LOANS            NUMBER(3);                               -- Number of loans to generate for a single day
+  V_LOAN_ID              NUMBER;                                  -- LOAN ID (from sequence)
+  V_BOOK_ID              VARCHAR2(5);                             -- Randomly selected BOOK_ID
+  V_MEMBER_ID            NUMBER;                                  -- Random MEMBER_ID
+  V_LOAN_DATE            DATE;                                   
+  V_DUE_DATE             DATE;                                  
+  V_RETURN_DATE          DATE;                                   
+  V_IS_EXTENDED          VARCHAR2(1);                                 
+  V_EXTENSION_COUNT      NUMBER;                            
+  COUNTER                NUMBER     := 0;
+BEGIN
+  -- Loop for each day in the date range
+  WHILE(STARTDATE <= ENDDATE) LOOP
+
+    -- Generate a random number of loans for the day (10 to 50 orders)
+    V_MAX_LOANS := TRUNC(DBMS_RANDOM.VALUE(10,51)); 
+
+    -- Inner loop: generate v_max_loans for the current day
+    FOR NO_OF_LOANS IN 1..V_MAX_LOANS LOOP
+      COUNTER := COUNTER + 1;
+
+      -- Get the next loan ID from sequence
+      V_LOAN_ID := LOAN_SEQ.NEXTVAL;
+
+      -- Generate random book ID between B001 and B100
+      SELECT BOOK_ID INTO V_BOOK_ID
+      FROM (
+        SELECT BOOK_ID FROM BOOK ORDER BY DBMS_RANDOM.VALUE
+      )
+      WHERE ROWNUM = 1; 
+
+      -- Generate random member ID using actual member_id min & max (replace yyyy and xxxx)
+      V_MEMBER_ID := TRUNC(DBMS_RANDOM.VALUE(100002,107681));            
+
+      -- Assign Loan date as the current loop date
+      V_LOAN_DATE  := STARTDATE;      
+
+      -- Due date = loan date + 7 days
+      V_DUE_DATE  := V_LOAN_DATE + 7;      
+
+      -- Return date = loan date -2 to + 31 days (some eraly, some late)
+      V_RETURN_DATE  := V_DUE_DATE + TRUNC(DBMS_RANDOM.VALUE(-2,31));
+
+      -- Randomize extension status
+      V_IS_EXTENDED  := CASE 
+                         WHEN DBMS_RANDOM.VALUE(0,1) < 0.2 THEN 'Y'  -- 20% extended
+                         ELSE 'N' 
+                        END;
+
+      -- If extended, randomize number of extensions (1-2), else 0
+      V_EXTENSION_COUNT    := CASE 
+                               WHEN V_IS_EXTENDED = 'Y' THEN TRUNC(DBMS_RANDOM.VALUE(1,3)) 
+                               ELSE 0 
+                              END;
+
+      -- Insert generated loans into new_loans table
+      INSERT INTO NEW_LOANS VALUES
+      (                                        
+      V_LOAN_ID,                       
+      V_BOOK_ID,                        
+      V_MEMBER_ID,              
+      V_LOAN_DATE,                                         
+      V_DUE_DATE,                                         
+      V_RETURN_DATE,                                       
+      V_IS_EXTENDED,                                           
+      V_EXTENSION_COUNT                              
+      );
+    END LOOP;
+    -- Move to the next day
+    STARTDATE := STARTDATE + 1;
+  END LOOP;
+  DBMS_OUTPUT.PUT_LINE('TOTAL LOANS GENERATED ARE ' || COUNTER);
+END;
+/
+-- Display time after loan generation completes
+SELECT TO_CHAR(SYSDATE,'HH:MI:SS')
+FROM DUAL;
+
+SELECT COUNT(*) FROM NEW_LOANS = 98563 records;
+
+-- CHECK MULTIPLE LOANS BY EACH MEMBER
+SELECT MEMBER_ID, COUNT(*) AS NUM_LOANS
+FROM NEW_LOANS
+GROUP BY MEMBER_ID
+HAVING COUNT(*) > 1
+ORDER BY NUM_LOANS DESC;
+
+
+-- SHOW ORDER FREQUENCY PER MEMBER
+SELECT MEMBER_ID, COUNT(*) NO_OF_LOANS
+FROM NEW_LOANS
+GROUP BY MEMBER_ID;
+
+-- MY TOP MEMBER_ID WHO HAVING THE HIGHEST LOANS WITHIN 10 YEARS?
+SELECT *
+FROM (
+ SELECT MEMBER_ID, COUNT(*) NO_OF_LOANS
+ FROM NEW_LOANS
+ GROUP BY MEMBER_ID
+ ORDER BY NO_OF_LOANS DESC
+)
+WHERE ROWNUM = 1;
+
+ MEMBER_ID NO_OF_LOANS
+---------- -----------
+    106486          29
+
+--SELECT COUNT(*) FROM NEW_LOANS;
+
+
+
+
+
+

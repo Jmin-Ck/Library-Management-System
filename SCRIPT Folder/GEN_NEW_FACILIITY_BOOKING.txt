@@ -1,0 +1,136 @@
+-- Author: CHAK JIA MIN
+-- CHECK ALL YOUR TABLES
+
+SELECT TABLE_NAME FROM TABS;
+
+SELECT COUNT(*) FROM FACILITY;
+-- 10 Facility
+
+======================================
+-- GENERATE FACILITY BOOKING RECORD
+======================================
+
+=========================================================
+-- Drop the existing new_facility_booking table if it exists
+
+
+-- Create the new_facility_booking table to store synthetic order data
+CREATE TABLE NEW_FACILITY_BOOKING (
+    BOOKING_ID          NUMBER  NOT NULL,
+    MEMBER_ID           NUMBER  NOT NULL,
+    FACILITY_ID         VARCHAR2(5)  NOT NULL,
+    BOOKING_DATE        DATE NOT NULL,
+    BOOKING_START_TIME  DATE,
+    BOOKING_END_TIME    DATE,
+    BOOKING_FEE_AMT     NUMBER(8,2),
+    IS_CHECKED_IN       VARCHAR2(1)  DEFAULT 'Y' CHECK(IS_CHECKED_IN IN('Y','N')),
+    -- Primary key constraint
+    CONSTRAINT NEW_FAC_BOOKING_BOOKINGID_PK PRIMARY KEY (BOOKING_ID, BOOKING_DATE),
+    CONSTRAINT NEW_FAC_BOOKING_MEMBERID_FK FOREIGN KEY (MEMBER_ID) REFERENCES NEW_MBR(MEMBER_ID),
+    CONSTRAINT NEW_FAC_BOOKING_FACILITYID_FK FOREIGN KEY (FACILITY_ID) REFERENCES FACILITY(FACILITY_ID)  
+);
+
+-- Create a sequence to generate ORDERID values starting from 100001
+CREATE SEQUENCE FC_BOOK_SEQ
+   START WITH 100001
+   INCREMENT BY 1;
+
+-- Display current time to track script start
+SELECT TO_CHAR(SYSDATE,'HH:MI:SS')
+FROM DUAL;
+
+-- Enable DBMS output for debugging
+SET SERVEROUTPUT ON
+
+-- Declare a PL/SQL block to generate Loan Record for 10 years (from 01/01/2016 to 31/08/2025)
+DECLARE
+  STARTDATE      DATE := TO_DATE('30/06/2016','DD/MM/YYYY');  -- Starting date of loan generation
+  ENDDATE        DATE := TO_DATE('01/07/2025','DD/MM/YYYY');  -- Ending date
+
+  V_MAX_BOOKING         NUMBER(3);                               -- Number of loans to generate for a single day
+  V_BOOKING_ID          NUMBER;
+  V_MEMBER_ID           NUMBER;
+  V_FACILITY_ID         VARCHAR2(5);
+  V_BOOKING_DATE        DATE;
+  V_BOOKING_START_TIME  DATE;
+  V_BOOKING_END_TIME    DATE;
+  V_FEE_PER_HOUR        NUMBER(6,2);
+  V_BOOKING_FEE_AMT     NUMBER(8,2);
+  V_IS_CHECKED_IN       VARCHAR2(1);                           
+  COUNTER               NUMBER     := 0;
+BEGIN
+  -- Loop for each day in the date range
+  WHILE(STARTDATE <= ENDDATE) LOOP
+
+    -- Generate a random number of bookings for the day (5 to 20 bookings)
+    V_MAX_BOOKING := TRUNC(DBMS_RANDOM.VALUE(5,21)); 
+
+    -- Inner loop: generate v_max_loans for the current day
+    FOR NO_OF_BOOKING IN 1..V_MAX_BOOKING LOOP
+      COUNTER := COUNTER + 1;
+
+      -- Get the next booking ID from sequence
+      V_BOOKING_ID := FC_BOOK_SEQ.NEXTVAL;
+
+      -- Generate random facility ID between F0001 and F0010
+      SELECT FACILITY_ID, BOOKING_FEE_PER_HOUR
+      INTO V_FACILITY_ID, V_FEE_PER_HOUR
+      FROM (
+        SELECT FACILITY_ID , BOOKING_FEE_PER_HOUR
+        FROM FACILITY ORDER BY DBMS_RANDOM.VALUE
+      )
+      WHERE ROWNUM = 1;
+
+      -- Generate random member ID using actual member_id min & max (replace yyyy and xxxx)
+      V_MEMBER_ID := TRUNC(DBMS_RANDOM.VALUE(100002,107681));            
+
+      -- Assign Booking date as the current loop date
+      V_BOOKING_DATE  := STARTDATE;      
+
+      -- Booking start time between 8am and 8pm
+      V_BOOKING_START_TIME  := V_BOOKING_DATE + (TRUNC(DBMS_RANDOM.VALUE(8,21)) / 24);      
+
+      -- Booking end time allows 1 to 3 hours booking
+      V_BOOKING_END_TIME  := V_BOOKING_START_TIME + (TRUNC(DBMS_RANDOM.VALUE(1,4)) / 24);
+
+      -- Randomize checked-in status
+      V_IS_CHECKED_IN  := CASE 
+                         WHEN DBMS_RANDOM.VALUE < 0.9 THEN 'Y' 
+                         ELSE 'N' 
+                        END;
+
+     
+
+      -- Insert generated facility booking records into new_facility_booking table
+      INSERT INTO NEW_FACILITY_BOOKING VALUES
+      (
+      V_BOOKING_ID,          
+      V_MEMBER_ID,          
+      V_FACILITY_ID,         
+      V_BOOKING_DATE,        
+      V_BOOKING_START_TIME,  
+      V_BOOKING_END_TIME,   
+      V_BOOKING_FEE_AMT,   
+      V_IS_CHECKED_IN       
+      );
+    END LOOP;
+    -- Move to the next day
+    STARTDATE := STARTDATE + 1;
+  END LOOP;
+  DBMS_OUTPUT.PUT_LINE('TOTAL BOOKINGS GENERATED ARE ' || COUNTER);
+END;
+/
+
+-- TOTAL BOOKINGS GENERATED ARE 41271
+-- Display time after facility_booking generation completes
+SELECT TO_CHAR(SYSDATE,'HH:MI:SS')
+FROM DUAL;
+
+-- SELECT COUNT(*) FROM NEW_FACILITY_BOOKING;
+
+
+
+
+
+
+

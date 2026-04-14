@@ -1,0 +1,128 @@
+-- Author: CHAK JIA MIN
+-- CHECK ALL YOUR TABLES
+
+SELECT TABLE_NAME FROM TABS;
+
+-- Verify loan records
+SELECT COUNT(*) FROM NEW_LOANS;
+-- 98095 records
+
+======================================
+-- GENERATE FINE INVOICES
+======================================
+
+-- Check the minimum and maximum LOAN_ID in LOAN_RECORD
+SELECT MIN(LOAN_ID), MAX(LOAN_ID)
+FROM LOAN_RECORD;
+
+MIN(LOAN_ID)    MAX(LOAN_ID)
+--------------- ---------------
+          L0001           L1543     
+
+-- Check the minimum and maximum LOAN_ID in NEW_LOANS
+SELECT MIN(LOAN_ID), MAX(LOAN_ID)
+  2  FROM NEW_LOANS;
+
+MIN(LOAN_ID) MAX(LOAN_ID)
+------------ ------------
+      100001       198095       
+
+-- Check the minimum and maximum FINE_ID in FINE_INVOICES
+SELECT MIN(FINE_ID), MAX(FINE_ID)
+FROM FINE_INVOICES;
+
+MIN(FINE_ID)   MAX(FINE_ID)
+-------------- --------------
+        FI0001         FI0200
+
+
+=========================================================
+-- Drop the existing new_fine_invoices table if it exists
+
+-- Create the new_fine_invoices table to store synthetic fine_invoices data
+CREATE TABLE NEW_FINE_INVOICES (
+    FINE_ID       NUMBER  NOT NULL,
+    LOAN_ID       NUMBER NOT NULL,
+    OVERDUE_DAYS  NUMBER,
+    FINE_PER_DAY  NUMBER(5,2),
+    FINE_AMT      NUMBER(8,2),
+    -- Primary key constraint
+    CONSTRAINT NEW_FINE_INVOICES_FINEID_PK PRIMARY KEY(FINE_ID),
+    CONSTRAINT NEW_FINE_INVOICES_LOANID_FK FOREIGN KEY (LOAN_ID) REFERENCES NEW_LOANS(LOAN_ID)
+);
+
+-- Create a sequence to generate FINEID values starting from 100001
+CREATE SEQUENCE FINE_SEQ
+   START WITH 100001
+   INCREMENT BY 1;
+
+-- Display current time to track script start
+SELECT TO_CHAR(SYSDATE,'HH:MI:SS')
+FROM DUAL;
+
+-- Enable DBMS output for debugging
+SET SERVEROUTPUT ON
+
+-- Declare a PL/SQL block to generate Loan Record for 10 years (from 01/01/2016 to 31/08/2025)
+DECLARE
+  CURSOR LOAN_CUR IS
+    SELECT LOAN_ID, DUE_DATE, RETURN_DATE
+    FROM NEW_LOANS;
+
+  V_FINE_ID           NUMBER;                               
+  V_LOAN_ID           NUMBER;             
+  V_OVERDUE_DAYS      NUMBER;          
+  V_FINE_PER_DAY      NUMBER(5,2);      
+  V_FINE_AMT          NUMBER(8,2); 
+  COUNTER             NUMBER := 0;                                  
+  
+BEGIN
+  -- Loop for each day in the date range
+  FOR REC IN LOAN_CUR LOOP
+
+    V_FINE_ID := FINE_SEQ.NEXTVAL;
+    
+    -- Assign LOAN_ID FROM LOAN_RECORD
+    V_LOAN_ID := rec.LOAN_ID;
+    V_OVERDUE_DAYS := GREATEST(0, rec.RETURN_DATE - rec.DUE_DATE);
+
+
+    IF V_OVERDUE_DAYS > 0 THEN
+       V_FINE_AMT := V_OVERDUE_DAYS * V_FINE_PER_DAY;
+
+      -- Insert generated fine records into new_fine_invoices table
+      INSERT INTO NEW_FINE_INVOICES VALUES
+      (
+      V_FINE_ID,                             
+      V_LOAN_ID,                  
+      V_OVERDUE_DAYS,          
+      V_FINE_PER_DAY,           
+      V_FINE_AMT
+      );
+      COUNTER := COUNTER + 1;
+    END IF;
+  END LOOP;
+  DBMS_OUTPUT.PUT_LINE('TOTAL FINES GENERATED ARE ' || COUNTER);
+END;
+/
+
+-- TOTAL FINES GENERATED ARE 89147
+
+-- Update existing records with proper fine rates
+UPDATE NEW_FINE_INVOICES
+SET FINE_PER_DAY = 0.50,
+    FINE_AMT = OVERDUE_DAYS * 0.50
+WHERE FINE_PER_DAY IS NULL OR FINE_AMT IS NULL;
+COMMIT;
+
+-- Display time after loan generation completes
+SELECT TO_CHAR(SYSDATE,'HH:MI:SS')
+FROM DUAL;
+
+
+
+
+
+
+
+

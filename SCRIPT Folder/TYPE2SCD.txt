@@ -1,0 +1,97 @@
+=========================================
+MEMBER_DIM TYPE 2 SCD MAINTENANCE
+=========================================
+CREATE OR REPLACE PROCEDURE MAINTAIN_MEMBER_SCD IS
+BEGIN
+    -- Expire members who ended their membership
+    UPDATE MEMBER_DIM
+    SET IS_ACTIVE = 'N'
+    WHERE IS_ACTIVE = 'Y'
+      AND MEMBER_END_DATE IS NOT NULL
+      AND MEMBER_END_DATE < SYSDATE;
+
+    -- Reactivate members who renewed
+    UPDATE MEMBER_DIM md
+    SET MEMBER_END_DATE = NULL,
+        IS_ACTIVE = 'Y'
+    WHERE IS_ACTIVE = 'N'
+      AND EXISTS (
+          SELECT 1 FROM NEW_MBR nm
+          WHERE nm.MEMBER_ID = md.MEMBER_ID
+            AND nm.MEMBER_END_DATE IS NULL
+            AND md.MEMBER_END_DATE IS NOT NULL
+      );
+        -- Insert new version
+        INSERT INTO MEMBER_DIM (
+            MEMBER_KEY, MEMBER_ID, MEMBER_NAME, MEMBER_EMAIL, MEMBER_PHONE_NUM,
+            MEMBER_ADDRESS, MEMBER_CITY, MEMBER_COUNTRY, MEMBER_STATE, MEMBER_ZIP_CODE,
+            MEMBER_START_DATE, MEMBER_END_DATE, IS_ACTIVE
+        )
+        VALUES (
+            MBR_DIM_SEQ.NEXTVAL,
+            rec.MEMBER_ID,
+            UPPER(rec.MEMBER_NAME),
+            rec.MEMBER_EMAIL,
+            rec.MEMBER_PHONE_NUM,
+            UPPER(rec.MEMBER_ADDRESS),
+            UPPER(rec.MEMBER_CITY),
+            UPPER(rec.MEMBER_COUNTRY),
+            UPPER(rec.MEMBER_STATE),
+            rec.MEMBER_ZIP_CODE,
+            SYSDATE,  -- New effective date
+            rec.MEMBER_END_DATE,
+            CASE WHEN rec.MEMBER_END_DATE IS NULL THEN 'Y' ELSE 'N' END
+        );
+    END LOOP;
+
+    COMMIT;
+END;
+/
+
+
+
+=========================================
+BOOK_DIM TYPE 2 SCD MAINTENANCE
+=========================================
+CREATE OR REPLACE PROCEDURE MAINTAIN_BOOK_SCD IS
+BEGIN
+    -- Expire old versions where price changed
+    UPDATE BOOK_DIM bd
+    SET EXPIRATION_DATE = SYSDATE - 1,
+        IS_CURRENT = 'N'
+    WHERE IS_CURRENT = 'Y'
+      AND EXISTS (
+          SELECT 1 FROM BOOK b
+          WHERE b.BOOK_ID = bd.BOOK_ID
+            AND b.PRICE != bd.PRICE
+      );
+
+    -- Insert new versions with updated prices
+    INSERT INTO BOOK_DIM (
+        BOOK_KEY, BOOK_ID, TITLE, AUTHOR, PUBLISHER, PUBLISHED_YEAR,
+        GENRE, LANGUAGE, PRICE, EFFECTIVE_DATE, EXPIRATION_DATE, IS_CURRENT
+    )
+    SELECT
+        BOOK_DIM_SEQ.NEXTVAL,
+        b.BOOK_ID,
+        UPPER(b.TITLE),
+        UPPER(b.AUTHOR),
+        UPPER(b.PUBLISHER),
+        b.PUBLISHED_YEAR,
+        UPPER(b.GENRE),
+        UPPER(b.LANGUAGE),
+        b.PRICE,
+        SYSDATE,  -- New effective date
+        NULL,
+        'Y'
+    FROM BOOK b
+    WHERE EXISTS (
+        SELECT 1 FROM BOOK_DIM bd
+        WHERE bd.BOOK_ID = b.BOOK_ID
+          AND bd.IS_CURRENT = 'N'
+          AND bd.EXPIRATION_DATE = SYSDATE - 1
+    );
+
+    COMMIT;
+END;
+/

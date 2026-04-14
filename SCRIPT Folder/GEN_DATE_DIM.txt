@@ -1,0 +1,223 @@
+-- Author: CHAK JIA MIN
+-- check tables created
+SELECT TABLE_NAME FROM TABS; 
+
+-- check records
+SELECT COUNT(*) FROM NEW_MBR; -- = 7680 RECORDS
+
+SELECT COUNT(*) FROM NEW_LOANS; -- = 98095 RECORDS
+
+SELECT COUNT(*) FROM NEW_FINE_INVOICES; -- = 89147  RECORDS
+
+SELECT COUNT(*) FROM NEW_FACILITY_BOOKING; -- = 41271  RECORDS
+
+==============================================
+Step 1: Create the Date Dimension Table
+==============================================
+-- Create the table with fields related to calendar and time attributes
+CREATE TABLE DATE_DIM
+(
+ DATE_KEY          NUMBER NOT NULL,  -- Primary key, running number
+ CAL_DATE          DATE   NOT NULL,  -- Actual calendar date
+ FULL_DESC         VARCHAR(40),      -- Description like '2023 July 01
+ DAY_WEEK          NUMBER(1),        -- Day of week (1 = Sunday, 7 = Saturday)
+ DAY_NUM_MONTH     NUMBER(2),        -- Day number in the month (1-31)
+ DAY_NUM_YEAR      NUMBER(3),        -- Day number in the year (1-366)
+ LAST_DAY_IND      CHAR(1),          -- 'Y' if last day of the month, else 'N'
+ CAL_WEEK_END_DATE DATE,             -- End of the week date (Sunday)
+ CAL_WEEK_YEAR     NUMBER(2),        -- Week number in the year (ISO week)
+ CAL_MONTH_NAME    VARCHAR(9),       -- Full month name
+ CAL_MONTH_YEAR    NUMBER(2),        -- Month number (1-12)
+ CAL_YEAR_MONTH    CHAR(7),          -- Format like '2023-07'
+ CAL_QUARTER       CHAR(2),          -- Quarter like 'Q1'
+ CAL_YEAR_QUARTER  CHAR(7),          -- Format like '2023-Q1'
+ CAL_YEAR          NUMBER(4),        -- Calendar year
+ HOLIDAY_IND       CHAR(1),          -- 'Y' if holiday, else 'N'
+ WEEKDAY_IND       CHAR(1),          -- 'Y' if weekday (Mon-Fri), else 'N'
+ FESTIVE_EVENT     VARCHAR(25),      -- Optional description of event/holiday
+ CONSTRAINT PK_DATE_KEY PRIMARY KEY(DATE_KEY)
+);
+
+-- view the day of a month
+SELECT TO_CHAR(SYSDATE,'DD') FROM DUAL;
+
+
+==============================================
+Step 2: Create Sequence for Primary Key
+==============================================
+-- Drop sequence if exists and create a new one
+
+CREATE SEQUENCE DATE_DIM_SEQ
+   START WITH 100001
+   INCREMENT BY 1;
+   
+==============================================
+Step 3: Populate the Table using PL/SQL Loop
+==============================================
+
+-- Use PL/SQL loop to insert records from 01-Jan-2000 to 31-Dec-2025
+DECLARE
+    -- Define the start and end date for the loop
+    STARTDATE DATE := TO_DATE('01/01/2000','DD/MM/YYYY');
+    ENDDATE   DATE := TO_DATE('31/12/2025','DD/MM/YYYY');
+
+    -- Variables to hold calculated calendar attributes
+    V_CAL_DATE            DATE;
+    V_FULL_DESC           VARCHAR2(40);
+    V_DAY_WEEK            NUMBER(1);
+    V_DAY_NUM_MONTH       NUMBER(2); 
+    V_DAY_NUM_YEAR        NUMBER(3);
+    V_LAST_DAY_IND        CHAR(1);
+    V_CAL_WEEK_END_DATE   DATE;
+    V_CAL_WEEK_YEAR       NUMBER(2);
+    V_CAL_MONTH_NAME      VARCHAR2(9);
+    V_CAL_MONTH_YEAR      NUMBER(2);
+    V_CAL_YEAR_MONTH      CHAR(7);
+    V_CAL_QUARTER         CHAR(2);
+    V_CAL_YEAR_QUARTER    CHAR(7);
+    V_CAL_YEAR            NUMBER(4);
+    V_HOLIDAY_IND         CHAR(1);
+    V_WEEKDAY_IND         CHAR(1);
+    V_FESTIVE_EVENT       VARCHAR2(25);
+BEGIN
+    -- Loop through each day from startDate to endDate
+    WHILE(STARTDATE <= ENDDATE) LOOP
+        -- 1. Assign the loop date to v_CAL_DATE
+        V_CAL_DATE := STARTDATE; 
+
+        -- 2. Build a human-readable description: Year Month DD
+        V_FULL_DESC := TO_CHAR(STARTDATE,'YEAR') ||' '||TO_CHAR(STARTDATE,'MONTH')||' '||TO_CHAR(STARTDATE,'DD'); 
+
+        -- 3. Extract day-of-week (1=Sunday..7=Saturday)
+        V_DAY_WEEK := TO_CHAR(STARTDATE,'D');
+       
+        -- 4. Day-of-month and day-of-year
+        V_DAY_NUM_MONTH := TO_CHAR(STARTDATE,'DD');
+        V_DAY_NUM_YEAR  := TO_CHAR(STARTDATE,'DDD');
+       
+        -- 5. Determine if this date is the last of its month <> is not equal (!=)
+        IF(STARTDATE <> LAST_DAY(STARTDATE)) THEN
+           V_LAST_DAY_IND := 'N';
+        ELSE
+           V_LAST_DAY_IND := 'Y';
+        END IF;
+
+        -- 6. Calculate the end-of-week date (assuming week ends on Sunday)
+        V_CAL_WEEK_END_DATE := STARTDATE + (7 - V_DAY_WEEK);
+        
+        -- 7. ISO week number, full month name, numeric month
+        V_CAL_WEEK_YEAR := TO_CHAR(STARTDATE,'IW');
+        V_CAL_MONTH_NAME := TO_CHAR(STARTDATE,'MONTH');
+        V_CAL_MONTH_YEAR := TO_CHAR(STARTDATE,'MM');
+
+        -- 8. Quarter and year
+        V_CAL_QUARTER := 'Q' || TO_CHAR(STARTDATE,'Q');
+        V_CAL_YEAR := TO_CHAR(STARTDATE,'YYYY');
+        
+        -- 9. Composite keys for easy grouping
+        V_CAL_YEAR_QUARTER := V_CAL_YEAR ||'-'||V_CAL_QUARTER;
+        V_CAL_YEAR_MONTH   := V_CAL_YEAR ||'-'||V_CAL_MONTH_YEAR;
+        -- 10. Default holiday flag to ‘N’ (can update later)
+        V_HOLIDAY_IND := 'N';
+        
+        -- 11. Mark weekdays (Mon–Fri)
+        IF(V_DAY_WEEK BETWEEN 2 AND 6) THEN
+           V_WEEKDAY_IND := 'Y';
+        ELSE
+           V_WEEKDAY_IND := 'N';
+        END IF;
+
+        -- 12. No festive event by default
+        V_FESTIVE_EVENT := NULL;
+        
+        -- 13. Insert the assembled record into the date_dim table
+        INSERT INTO DATE_DIM VALUES
+        (
+        DATE_DIM_SEQ.NEXTVAL,
+        V_CAL_DATE,
+        V_FULL_DESC,
+        V_DAY_WEEK,
+        V_DAY_NUM_MONTH,
+        V_DAY_NUM_YEAR,
+        V_LAST_DAY_IND,
+        V_CAL_WEEK_END_DATE,
+        V_CAL_WEEK_YEAR,
+        V_CAL_MONTH_NAME,
+        V_CAL_MONTH_YEAR,
+        V_CAL_YEAR_MONTH,
+        V_CAL_QUARTER,
+        V_CAL_YEAR_QUARTER,
+        V_CAL_YEAR,
+        V_HOLIDAY_IND,
+        V_WEEKDAY_IND,
+        V_FESTIVE_EVENT
+        );
+            
+
+        -- 14. Advance to the next date
+        STARTDATE := STARTDATE + 1;
+    END LOOP;
+END;
+/
+
+    -- Optional: You could print a counter or completion message here
+    -- dbms_output.put_line('Date Dimension load complete');
+
+
+==========================================
+Questions
+==========================================
+-- how many records in date_dim table?
+SELECT COUNT(*) FROM DATE_DIM;
+-- 9497 records
+
+-- Write a query to list, for every date in 2023.
+SELECT 
+    CAL_DATE,
+    FULL_DESC,
+    DAY_WEEK,
+    DAY_NUM_MONTH,
+    DAY_NUM_YEAR,
+    CAL_WEEK_YEAR,
+    CAL_MONTH_NAME,
+    CAL_QUARTER,
+    CAL_YEAR
+FROM DATE_DIM
+WHERE CAL_YEAR = 2023
+ORDER BY CAL_DATE;
+
+-- Write a query to display SYSDATE along with: the day‑of‑year (DDD), the ISO week number (IW), and the calendar quarter (Q).
+SELECT 
+    SYSDATE AS TODAY,
+    TO_CHAR(SYSDATE, 'DDD') AS DAY_OF_YEAR,
+    TO_CHAR(SYSDATE, 'IW')  AS ISO_WEEK_NUMBER,
+    TO_CHAR(SYSDATE, 'Q')   AS CALENDAR_QUARTER
+FROM dual;
+
+TODAY        DAY_OF ISO_ CA
+------------ ------ ---- --
+19-AUG-25    231    34   3
+
+-- Write a query to display how many members borrowed once, twice, three times in 1st quarter of the year 2023.
+SELECT num_distinct_loans, COUNT(*) AS num_members
+FROM (
+    SELECT 
+        NL.MEMBER_ID,
+        COUNT(DISTINCT NL.LOAN_ID) AS num_distinct_loans
+    FROM NEW_LOANS NL
+    JOIN DATE_DIM D 
+        ON NL.LOAN_DATE = D.CAL_DATE
+    WHERE D.CAL_YEAR = 2023
+      AND D.CAL_QUARTER = 'Q1'
+    GROUP BY NL.MEMBER_ID
+)
+GROUP BY num_distinct_loans
+ORDER BY num_distinct_loans;
+
+NUM_DISTINCT_LOANS NUM_MEMBERS
+------------------ -----------
+                 1        1791
+                 2         291
+                 3          36
+                 4           3
+

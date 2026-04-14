@@ -1,0 +1,262 @@
+-- Author: CHAK JIA MIN
+=====================================
+Generation of Fact Tables
+=====================================
+GRANT UNLIMITED TABLESPACE TO username;
+
+======================
+FACILITY_BOOKING_FACT 
+======================
+-- CREATE FACILITY_BOOKING_FACT
+CREATE TABLE FACILITY_BOOKING_FACT
+(
+MEMBER_KEY            NUMBER NOT NULL,
+DATE_KEY              NUMBER NOT NULL,            
+BOOKING_DATE          DATE NOT NULL,
+FACILITY_KEY          NUMBER NOT NULL,         
+BOOKING_START_TIME    DATE,
+BOOKING_END_TIME      DATE,
+BOOKING_FEE_PER_HOUR  NUMBER(6,2),
+BOOKING_FEE_AMT       NUMBER(8,2),
+CONSTRAINT FBF_PK PRIMARY KEY(MEMBER_KEY, DATE_KEY, BOOKING_DATE, FACILITY_KEY),
+CONSTRAINT FBF_MEMBER_FK FOREIGN KEY(MEMBER_KEY) REFERENCES MEMBER_DIM(MEMBER_KEY),
+CONSTRAINT FBF_DATE_FK FOREIGN KEY(DATE_KEY) REFERENCES DATE_DIM(DATE_KEY),
+CONSTRAINT FBF_FACILITY_FK FOREIGN KEY(FACILITY_KEY) REFERENCES FACILITY_DIM(FACILITY_KEY)
+);
+
+-- ETL
+
+-- EXTRACT
+SELECT
+  M.MEMBER_KEY,            
+  D.DATE_KEY,                          
+  FB.BOOKING_DATE,        
+  F.FACILITY_KEY,                  
+  FB.BOOKING_START_TIME,
+  FB.BOOKING_END_TIME,  
+  FF.BOOKING_FEE_PER_HOUR,  
+  (FB.BOOKING_END_TIME-FB.BOOKING_START_TIME)*FF.BOOKING_FEE_PER_HOUR
+FROM NEW_FACILITY_BOOKING FB
+JOIN MEMBER_DIM M ON FB.MEMBER_ID = M.MEMBER_ID
+JOIN FACILITY_DIM F ON FB.FACILITY_ID = F.FACILITY_ID
+JOIN FACILITY FF ON FB.FACILITY_ID = FF.FACILITY_ID
+JOIN DATE_DIM D ON FB.BOOKING_DATE = D.CAL_DATE;
+
+--INSERT
+CREATE OR REPLACE PROCEDURE FACILITY_BOOKING_FACT_LOAD IS
+    v_count NUMBER := 0;
+    v_total_records NUMBER := 0;
+    v_success_count NUMBER := 0;
+    v_error_count NUMBER := 0;
+BEGIN
+    -- Get total records for progress tracking
+    SELECT COUNT(*) INTO v_total_records FROM NEW_FACILITY_BOOKING;
+    DBMS_OUTPUT.PUT_LINE('Starting facility booking fact load. Total records: ' || v_total_records);
+
+    -- Process each booking one by one
+    FOR rec IN (
+        SELECT BOOKING_ID, MEMBER_ID, FACILITY_ID, BOOKING_DATE,
+               BOOKING_START_TIME, BOOKING_END_TIME
+        FROM NEW_FACILITY_BOOKING
+        ORDER BY BOOKING_DATE
+    ) LOOP
+        BEGIN
+            INSERT INTO FACILITY_BOOKING_FACT (
+                MEMBER_KEY,
+                DATE_KEY,
+                BOOKING_DATE,
+                FACILITY_KEY,
+                BOOKING_START_TIME,
+                BOOKING_END_TIME,
+                BOOKING_FEE_PER_HOUR,
+                BOOKING_FEE_AMT
+            )
+            SELECT
+                M.MEMBER_KEY,
+                D.DATE_KEY,
+                rec.BOOKING_DATE,
+                FD.FACILITY_KEY,
+                rec.BOOKING_START_TIME,
+                rec.BOOKING_END_TIME,
+                F.BOOKING_FEE_PER_HOUR,
+                ((rec.BOOKING_END_TIME - rec.BOOKING_START_TIME) * 24) * F.BOOKING_FEE_PER_HOUR
+            FROM MEMBER_DIM M
+            JOIN FACILITY_DIM FD ON FD.FACILITY_ID = rec.FACILITY_ID
+            JOIN FACILITY F ON F.FACILITY_ID = rec.FACILITY_ID
+            JOIN DATE_DIM D ON D.CAL_DATE = rec.BOOKING_DATE
+            WHERE M.MEMBER_ID = rec.MEMBER_ID;
+            
+            v_count := v_count + 1;
+            v_success_count := v_success_count + 1;
+            
+            -- Commit and show progress every 100 records
+            IF MOD(v_count, 100) = 0 THEN
+                COMMIT;
+                DBMS_OUTPUT.PUT_LINE('Processed ' || v_count || ' records');
+            END IF;
+            
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_count := v_count + 1;
+                v_error_count := v_error_count + 1;
+                DBMS_OUTPUT.PUT_LINE('Error with booking ' || rec.BOOKING_ID || ': ' || SQLERRM);
+        END;
+    END LOOP;
+    
+    COMMIT;
+    DBMS_OUTPUT.PUT_LINE('Total processed: ' || v_count || ' records');
+    DBMS_OUTPUT.PUT_LINE('Successfully inserted: ' || v_success_count || ' records');
+    DBMS_OUTPUT.PUT_LINE('Failed records: ' || v_error_count || ' records');
+    DBMS_OUTPUT.PUT_LINE('Total inserted: ' || v_success_count || ' records out of ' || v_total_records);
+END;
+/
+-- Execute the procedure
+SET SERVEROUTPUT ON;
+BEGIN
+    FACILITY_BOOKING_FACT_LOAD;
+END;
+/
+
+-- Verify Connections
+SELECT COUNT(*)
+FROM FACILITY_BOOKING_FACT F
+JOIN MEMBER_DIM M ON F.MEMBER_KEY = M.MEMBER_KEY;
+ COUNT(*)
+----------
+     41007
+
+
+
+=================
+BOOK_LOAN_FACT
+=================
+-- CREATE BOOK_LOAN_FACT
+CREATE TABLE BOOK_LOAN_FACT
+(
+MEMBER_KEY              NUMBER NOT NULL,
+BOOK_KEY                NUMBER NOT NULL,
+DATE_KEY                NUMBER NOT NULL,
+LOAN_DATE               DATE NOT NULL,
+DUE_DATE                DATE NOT NULL,
+RETURN_DATE             DATE NOT NULL,
+IS_EXTENDED             VARCHAR2(1)  DEFAULT 'N' CHECK(IS_EXTENDED IN('Y','N')),
+EXTENSION_COUNT         NUMBER,
+OVERDUE_DAYS            NUMBER,
+FINE_PER_DAY            NUMBER(5,2),
+FINE_AMT                NUMBER(8,2),
+CONSTRAINT LF_PK PRIMARY KEY(MEMBER_KEY, BOOK_KEY, DATE_KEY, LOAN_DATE, DUE_DATE, RETURN_DATE),
+CONSTRAINT LF_MEMBER_FK FOREIGN KEY(MEMBER_KEY) REFERENCES MEMBER_DIM(MEMBER_KEY),
+CONSTRAINT LF_BOOK_FK FOREIGN KEY(BOOK_KEY) REFERENCES BOOK_DIM(BOOK_KEY),
+CONSTRAINT LF_DATE_FK FOREIGN KEY(DATE_KEY) REFERENCES DATE_DIM(DATE_KEY)
+);
+
+-- EXTRACT
+SELECT
+  M.MEMBER_KEY,
+  B.BOOK_KEY,
+  D.DATE_KEY,
+  L.LOAN_DATE,
+  L.DUE_DATE,
+  L.RETURN_DATE,
+  L.IS_EXTENDED,
+  L.EXTENSION_COUNT,
+  FI.OVERDUE_DAYS,
+  FI.FINE_PER_DAY,
+  (FI.FINE_PER_DAY*FI.OVERDUE_DAYS)
+FROM NEW_LOANS L
+JOIN MEMBER_DIM M ON L.MEMBER_ID = M.MEMBER_ID
+JOIN BOOK_DIM B ON L.BOOK_ID = B.BOOK_ID
+JOIN DATE_DIM D ON L.LOAN_DATE = D.CAL_DATE
+JOIN NEW_FINE_INVOICES FI ON L.LOAN_ID = FI.LOAN_ID; 
+
+-- INSERT
+CREATE OR REPLACE PROCEDURE BOOK_LOAN_FACT_LOAD IS
+    v_count NUMBER := 0;
+    v_total_records NUMBER := 0;
+BEGIN
+    -- Get total records for progress tracking
+    SELECT COUNT(*) INTO v_total_records FROM NEW_LOANS;
+    DBMS_OUTPUT.PUT_LINE('Starting book loan fact load. Total records: ' || v_total_records);
+
+    -- Process each loan one by one (low TEMP usage)
+    FOR rec IN (
+        SELECT 
+            L.LOAN_ID,
+            L.MEMBER_ID,
+            L.BOOK_ID, 
+            L.LOAN_DATE,
+            L.DUE_DATE,
+            L.RETURN_DATE,
+            L.IS_EXTENDED,
+            L.EXTENSION_COUNT,
+            FI.OVERDUE_DAYS,
+            FI.FINE_PER_DAY,
+            (FI.FINE_PER_DAY * FI.OVERDUE_DAYS) AS CALCULATED_FINE_AMT
+        FROM NEW_LOANS L
+        JOIN NEW_FINE_INVOICES FI ON L.LOAN_ID = FI.LOAN_ID
+        ORDER BY L.LOAN_DATE
+    ) LOOP
+        BEGIN
+            INSERT INTO BOOK_LOAN_FACT (
+                MEMBER_KEY,
+                BOOK_KEY,
+                DATE_KEY,
+                LOAN_DATE,
+                DUE_DATE,
+                RETURN_DATE,
+                IS_EXTENDED,
+                EXTENSION_COUNT,
+                OVERDUE_DAYS,
+                FINE_PER_DAY,
+                FINE_AMT
+            )
+            SELECT
+                M.MEMBER_KEY,      -- From MEMBER_DIM 
+                B.BOOK_KEY,        -- From BOOK_DIM   
+                D.DATE_KEY,        -- From DATE_DIM 
+                rec.LOAN_DATE,
+                rec.DUE_DATE,
+                rec.RETURN_DATE,
+                rec.IS_EXTENDED,
+                rec.EXTENSION_COUNT,
+                rec.OVERDUE_DAYS,
+                rec.FINE_PER_DAY,
+                rec.CALCULATED_FINE_AMT
+            FROM DUAL
+            JOIN MEMBER_DIM M ON M.MEMBER_ID = rec.MEMBER_ID      
+            JOIN BOOK_DIM B ON B.BOOK_ID = rec.BOOK_ID            
+            JOIN DATE_DIM D ON D.CAL_DATE = rec.LOAN_DATE;        
+            
+            v_count := v_count + 1;
+            
+            -- Commit and show progress every 100 records
+            IF MOD(v_count, 100) = 0 THEN
+                COMMIT;
+                DBMS_OUTPUT.PUT_LINE('Processed ' || v_count || ' records');
+            END IF;
+            
+        EXCEPTION
+            WHEN OTHERS THEN
+                DBMS_OUTPUT.PUT_LINE('Error with loan ' || rec.LOAN_ID || ': ' || SQLERRM);
+        END;
+    END LOOP;
+    
+    COMMIT;
+    DBMS_OUTPUT.PUT_LINE('Total inserted: ' || v_count || ' records out of ' || v_total_records);
+END;
+/
+
+-- Execute the procedure
+SET SERVEROUTPUT ON;
+BEGIN
+    BOOK_LOAN_FACT_LOAD;
+END;
+/
+
+-- Verify Connections
+SELECT COUNT(*) 
+FROM BOOK_LOAN_FACT F
+JOIN MEMBER_DIM M ON F.MEMBER_KEY = M.MEMBER_KEY;
+  COUNT(*)
+----------
+    102362
